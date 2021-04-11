@@ -1,0 +1,42 @@
+name: Build and push to site branch
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: 'recursive'
+
+      - name: Install packages
+        run: |
+          sudo apt update
+          sudo apt install hugo
+
+      - name: Build website
+        run: hugo
+
+      # - name: Add and stash website
+      #   run: |
+      #     git add public/ -f
+      #     git stash push -- public/
+      #
+      # - name: Checkout to the site branch
+      #   run: git checkout site
+      #
+      # - name: Pop stash
+      #   run: git stash pop
+
+      - uses: EndBug/add-and-commit@v7.0.0
+        with:
+          author_name: github-actions
+          author_email: 41898282+github-actions[bot]@users.noreply.github.com
+          message: 'Update website'
+          branch: site
+          add: 'public --force'
