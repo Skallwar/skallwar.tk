@@ -1,4 +1,4 @@
-baseurl = "/"
+baseurl = "https://skallwar.tk/"
 languageCode = "en-us"
 title = "My New Hugo Site"
 theme = "terminal"
