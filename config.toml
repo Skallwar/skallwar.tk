@@ -32,7 +32,7 @@ paginate = 5
   enableGitInfo = true
   showLastUpdated = false
   # Provide a string as a prefix for the last update date. By default, it looks like this: 2020-xx-xx [Updated: 2020-xx-xx] :: Author
-  # updatedDatePrefix = "Updated"
+  updatedDatePrefix = "Revised"
 
   # set all headings to their default size (depending on browser settings)
   # it's set to `true` by default
@@ -41,7 +41,7 @@ paginate = 5
 [languages]
   [languages.en]
     languageName = "English"
-    title = "Skallwar.tk"
+    title = "Skallwar.fr"
     subtitle = "Blog of a software engineer"
     owner = ""
     keywords = ""
@@ -55,5 +55,5 @@ paginate = 5
     missingBackButtonLabel = "Back to home page"
 
     [languages.en.params.logo]
-      logoText = "Skallwar.tk"
+      logoText = "Skallwar.fr"
       logoHomeLink = "/"
