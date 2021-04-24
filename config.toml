@@ -38,6 +38,9 @@ paginate = 5
   # it's set to `true` by default
   # oneHeadingSize = false
 
+  enableRobotsTXT = true
+  canonifyURLs = true
+
 [languages]
   [languages.en]
     languageName = "English"
