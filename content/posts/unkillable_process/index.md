@@ -109,13 +109,13 @@ Here is what a basic [hello world](https://github.com/iovisor/bcc/blob/master/ex
 
 from bcc import BPF
 
-BPF(text='int kprobe__sys_clone(void *ctx) { bpf_trace_printk("Hello, World!\\n"); return 0; }').trace_print()
+BPF(text='int syscall__kill(void *ctx) { bpf_trace_printk("Hello, World!\\n"); return 0; }').trace_print()
 {{</highlight>}}
 
 So we write some C code as a string inside your Python script... Weird but why not ?
 You can also load from a file like so:
 {{<highlight c>}}
-int kprobe__sys_clone(void *ctx) {
+int syscall_kill(void *ctx) {
     bpf_trace_printk("Hello, World!\\n"); 
     return 0;
 }
@@ -130,102 +130,205 @@ from bcc import BPF
 BPF(src_file = "hello_world.c")
 {{</highlight>}}
 
-In order to prevent our script to be killed, it needs to be able to block signals for multiples pids. I also want to block multiple signals. But how do we provide this arguments to our eBPF program?
-This is done using eBPF maps. Maps are data structures used to share data between userland and our eBPF program.
-There is a lot of different [kinds of maps](https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#maps), going from arrays to hashmaps.
-To create a new map with BCC you use the ``BPF_YOURTYPEHERE`` macro in your C stub like so:
+In order to prevent our script to be killed, it needs to be able to block 
+signals for multiples pids. I also want to block multiple signals. But how do 
+we provide this arguments to our eBPF program? This is done using eBPF maps. 
+Maps are data structures used to share data between userland and our eBPF 
+program.
+There is a lot of different [kinds of maps](https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#maps),
+going from arrays to hashmaps. To create a new map with BCC you use the 
+``BPF_YOURTYPEHERE`` macro in your C stub like so:
 {{<highlight c>}}
 BPF_HASH(pids, int, u8); // Syntax: BPF_HASH(name, key_type, value_type)
 {{</highlight>}}
 
-So my implementation is quite simple:
-- Parse the arguments to retrieve signals to block and the pids that need to be protected
-- Put the pids to block inside a map of type hashmap and the signals in a map of type array
-- Hook the kill syscall and check override the return value if kill is called on a protected pids with a signal that needs to be blocked
+For the eBPF hook, the logic is quite simple: if the given pid is inside the
+pids hashmap and the signal is in the signal array, then we need to return early
+from the syscall.
 
-But a new problem arise now. If we protect our script how can we stop it? So 
-I've implemented a system of ticket (a simple file with a unique name) in the 
-tmpfs where the script is pooling wether our ticket has been deleted or not.
+Here is the C code corresponding to this algorithm:
+{{<highlight c>}}
+#include <uapi/linux/ptrace.h>
+#include <linux/sched.h>
 
-<!-- So here the final result: -->
-<!-- {{<highlight c>}} -->
-<!-- #include <uapi/linux/ptrace.h> -->
-<!-- #include <linux/sched.h> -->
-<!--  -->
-<!-- BPF_HASH(pids, int, u8); -->
-<!-- BPF_ARRAY(sigs, u8, 65); -->
-<!--  -->
-<!-- static u8 needs_block(u8 protected_pid, u8 protected_sig) { -->
-<!--     return protected_pid != 0 && protected_sig != 0; -->
-<!-- } -->
-<!--  -->
-<!-- int syscall__kill(struct pt_regs *ctx, int pid, int sig) -->
-<!-- { -->
-<!--     u8 *protected_pid = pids.lookup(&pid); -->
-<!--     u8 *protected_sig = sigs.lookup(&sig); -->
-<!--     if (!protected_pid || !protected_sig) -->
-<!--         return 0; -->
-<!--     if (needs_block(*protected_pid, *protected_sig)) { -->
-<!--         bpf_trace_printk("Blockeg signal %d for %d\\n", sig, pid); -->
-<!--         bpf_override_return(ctx, 0); -->
-<!--     } -->
-<!--     return 0; -->
-<!-- } -->
-<!-- {{</highlight>}} -->
-<!--  -->
-<!--  -->
-<!-- {{<highlight python>}} -->
-<!-- #!/usr/bin/python -->
-<!--  -->
-<!-- from bcc import BPF -->
-<!-- from bcc.utils import ArgString, printb -->
-<!-- from ctypes import * -->
-<!-- import argparse -->
-<!-- import tempfile -->
-<!-- import time -->
-<!-- import os -->
-<!--  -->
-<!-- def parse_args(): -->
-<!--     parser = argparse.ArgumentParser(description='Blocksig is a tool to block certain or all signal to be recived by given pids') -->
-<!--     parser.add_argument('-p', dest='pids', nargs='+', default=[], metavar='pid', help='List of pid to protect') -->
-<!--     parser.add_argument('-s', dest='sigs', nargs='+', default=[], metavar='signal_num', help='List of signal to block. If no signal is specified, they are all blocked') -->
-<!--     parser.add_argument('--auto-protect', action=argparse.BooleanOptionalAction, default=True, help='Whether to protect blocksig itself or not') -->
-<!--     args = parser.parse_args() -->
-<!--  -->
-<!--     return args -->
-<!--  -->
-<!--  -->
-<!-- def initialize_bpf(args): -->
-<!--     b = BPF(src_file = "blocksig.c") -->
-<!--     kill_fnname = b.get_syscall_fnname('kill') -->
-<!--     b.attach_kprobe(event=kill_fnname, fn_name='syscall__kill') -->
-<!--     pids_map = b.get_table('pids') -->
-<!--     sigs_map = b.get_table('sigs') -->
-<!--  -->
-<!--     if args.auto_protect == True: -->
-<!--         args.pids.append(str(os.getpid())) -->
-<!--     for pid in args.pids: -->
-<!--         pids_map[c_int(int(pid))] = c_int(1) -->
-<!--  -->
-<!--     sig_array = [int(sig) for sig in args.sigs] if len(args.sigs) else range(1, 64) -->
-<!--     for sig in sig_array: -->
-<!--         sigs_map[sig] = c_int(1) -->
-<!--  -->
-<!-- def wait_for_close(): -->
-<!-- # Create a tempfile and wait for its deletion -->
-<!--     tf = tempfile.NamedTemporaryFile(delete = False) -->
-<!--     print(f"This script might not be killable anymore. To stop it run ``rm {tf.name}``") -->
-<!--  -->
-<!--     try: -->
-<!--         while os.path.isfile(tf.name): -->
-<!--             time.sleep(0.5) -->
-<!--             continue -->
-<!--     except KeyboardInterrupt: -->
-<!--         tf.close() -->
-<!--         os.remove(tf.name) -->
-<!--         print('') -->
-<!--  -->
-<!-- args = parse_args() -->
-<!-- initialize_bpf(args) -->
-<!-- wait_for_close() -->
-<!-- {{</highlight>}} -->
+BPF_HASH(pids, int, u8);
+BPF_ARRAY(sigs, u8, 65);
+
+static u8 needs_block(u8 protected_pid, u8 protected_sig) {
+    return protected_pid != 0 && protected_sig != 0;
+}
+
+int syscall__kill(struct pt_regs *ctx, int pid, int sig)
+{
+
+    u8 *protected_pid = pids.lookup(&pid);
+    u8 *protected_sig = sigs.lookup(&sig);
+    if (!protected_pid || !protected_sig)
+        return 0;
+
+    if (needs_block(*protected_pid, *protected_sig)) {
+        bpf_trace_printk("Blockeg signal %d for %d\\n", sig, pid);
+        bpf_override_return(ctx, 0);
+    }
+
+    return 0;
+}
+{{</highlight>}}
+
+The Python part needs a bit more logic to make it works:
+- Parse the arguments to retrieve signals to block and the pids that need to be
+protected
+- Add the pid of the Python script
+- Put the pids to block inside the corresponding maps
+
+Here is the Python code (without the argument parsing because that boring):
+{{<highlight python>}}
+# Args is the resulting object of parse_args() method of argparse
+def initialize_bpf(args):
+    b = BPF(src_file="blocksig.c")
+    kill_fnname = b.get_syscall_fnname('kill')
+    b.attach_kprobe(event=kill_fnname, fn_name='syscall__kill')
+    pids_map = b.get_table('pids')
+    sigs_map = b.get_table('sigs')
+
+    args.pids.append(str(os.getpid()))
+    for pid in args.pids:
+        pids_map[c_int(int(pid))] = c_int(1)
+
+    for sig in args.sig_array:
+        sigs_map[sig] = c_int(1)
+{{</highlight>}}
+
+Time for a demo:
+{{<highlight terminal>}}
+$ ping skallwar.fr > /dev/null &
+[1] 315629
+$ sudo ./blocksig.py 315629 &
+$ kill -9 315629
+$ # Nothing append
+$ kill -9 $(pidof python) # Pid of the blocksig
+$ # Nothing append
+{{</highlight>}}
+
+But a new problem arise now. If we protect our script and we close the terminal,
+how can we stop it? So I've implemented a system of ticket (a simple file with 
+a unique name) in the tmpfs where the script is pooling whether our ticket has 
+been deleted or not:
+{{<highlight python>}}
+def wait_for_close():
+# Create a tempfile and wait for its deletion
+    tf = tempfile.NamedTemporaryFile(delete = False)
+    print(f"This script might not be killable anymore. To stop it run ``rm {tf.name}``")
+
+    try:
+        while os.path.isfile(tf.name):
+            time.sleep(0.5)
+            continue
+    except KeyboardInterrupt:
+        tf.close()
+        os.remove(tf.name)
+        print('')
+{{</highlight>}}
+
+So there is 2 use case:
+- Keep it running in the shell and you can use ``CTRL+C`` to stop it (SIGINT 
+can still be blocked)
+- Run it in the background and use the unique ticket in order to stop it
+
+After all of this we should be good, we can protect ourself and our targeted pids.
+Let's see what it's look like in htop, just to make sure.
+
+{{<figure src="images/blocksig_py_sudo_pid_problem.png">}}
+{{<figure src="images/here_we_go_again.png">}}
+
+At this stage I was quite frustrated. Yes you could make it work by login as 
+root and not using ``sudo`` but that's not convinient at all. Fortunately I 
+found a [post on stack overflow](https://stackoverflow.com/questions/47284045/switch-user-without-creating-an-intermediate-process)
+about forcing sudo not to fork, suggesting me to use ``exec`` before ``sudo``.
+And for once, "it works on my machine"™ out of the box, nice.
+
+
+So here the final result:
+{{<highlight c>}}
+#include <uapi/linux/ptrace.h>
+#include <linux/sched.h>
+
+BPF_HASH(pids, int, u8);
+BPF_ARRAY(sigs, u8, 65);
+
+static u8 needs_block(u8 protected_pid, u8 protected_sig) {
+    return protected_pid != 0 && protected_sig != 0;
+}
+
+int syscall__kill(struct pt_regs *ctx, int pid, int sig)
+{
+    u8 *protected_pid = pids.lookup(&pid);
+    u8 *protected_sig = sigs.lookup(&sig);
+    if (!protected_pid || !protected_sig)
+        return 0;
+    if (needs_block(*protected_pid, *protected_sig)) {
+        bpf_trace_printk("Blockeg signal %d for %d\\n", sig, pid);
+        bpf_override_return(ctx, 0);
+    }
+    return 0;
+}
+{{</highlight>}}
+
+
+{{<highlight python>}}
+#!/usr/bin/python
+
+from bcc import BPF
+from bcc.utils import ArgString, printb
+from ctypes import *
+import argparse
+import tempfile
+import time
+import os
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Blocksig is a tool to block certain or all signal to be recived by given pids')
+    parser.add_argument('-p', dest='pids', nargs='+', default=[], metavar='pid', help='List of pid to protect')
+    parser.add_argument('-s', dest='sigs', nargs='+', default=[], metavar='signal_num', help='List of signal to block. If no signal is specified, they are all blocked')
+    parser.add_argument('--auto-protect', action=argparse.BooleanOptionalAction, default=True, help='Whether to protect blocksig itself or not')
+    args = parser.parse_args()
+
+    return args
+
+
+def initialize_bpf(args):
+    b = BPF(src_file = "blocksig.c")
+    kill_fnname = b.get_syscall_fnname('kill')
+    b.attach_kprobe(event=kill_fnname, fn_name='syscall__kill')
+    pids_map = b.get_table('pids')
+    sigs_map = b.get_table('sigs')
+
+    if args.auto_protect == True:
+        args.pids.append(str(os.getpid()))
+    for pid in args.pids:
+        pids_map[c_int(int(pid))] = c_int(1)
+
+    sig_array = [int(sig) for sig in args.sigs] if len(args.sigs) else range(1, 64)
+    for sig in sig_array:
+        sigs_map[sig] = c_int(1)
+
+def wait_for_close():
+# Create a tempfile and wait for its deletion
+    tf = tempfile.NamedTemporaryFile(delete = False)
+    print(f"This script might not be killable anymore. To stop it run ``rm {tf.name}``")
+
+    try:
+        while os.path.isfile(tf.name):
+            time.sleep(0.5)
+            continue
+    except KeyboardInterrupt:
+        tf.close()
+        os.remove(tf.name)
+        print('')
+
+args = parse_args()
+initialize_bpf(args)
+wait_for_close()
+{{</highlight>}}
+
+You can find all the code (and maybe future updates 👀) on [Github](https://github.com/Skallwar/blocksig)
