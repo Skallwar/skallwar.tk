@@ -24,29 +24,52 @@ All signals can be caught except ``SIGKILL`` and ``SIGSTOP``.
 >
 > -- <cite>[Job Control Signals](https://www.gnu.org/software/libc/manual/html_node/Job-Control-Signals.html)</cite>
 
-This seems to be two strong affirmations so this should be true. But I don't 
-want my process to die, I heard you say. Well if I can't catch them, what do 
-you want me to do? Kill the sender?
+But I don't want my process to die, I heard you say. Well if I can't catch them,
+what do you want me to do? Kill the sender?
 
-Actually I can't kill the sender, but I could try to intercept and drop the 
+Actually I can't kill the sender, but what if I could intercept and drop the 
 message...
 
 # Meet eBPF
-> The Linux kernel has always been an ideal place to implement monitoring/observability, networking, and security. Unfortunately this was often impractical as it required changing kernel source code or loading kernel modules, and resulted in layers of abstractions stacked on top of each other. eBPF is a revolutionary technology that can run sandboxed programs in the Linux kernel without changing kernel source code or loading kernel modules.
+> The Linux kernel has always been an ideal place to implement 
+> monitoring/observability, networking, and security. Unfortunately this was 
+> often impractical as it required changing kernel source code or loading kernel
+> modules, and resulted in layers of abstractions stacked on top of each other. 
+> eBPF is a revolutionary technology that can run sandboxed programs in the 
+> Linux kernel without changing kernel source code or loading kernel modules.
 >
->By making the Linux kernel programmable, infrastructure software can leverage existing layers, making them more intelligent and feature-rich without continuing to add additional layers of complexity to the system or compromising execution efficiency and safety.
+> By making the Linux kernel programmable, infrastructure software can leverage 
+> existing layers, making them more intelligent and feature-rich without 
+> continuing to add additional layers of complexity to the system or 
+> compromising execution efficiency and safety.
 >
 > -- <cite> [eBPF](https://ebpf.io/) </cite>
 
+eBPF is used to expand the Linux kernel by allowing user space program to 
+inject some code into hook points. The code is JIT compiled and executed if 
+there is no error raised by the verification engine.
+
 # Blocking some signals
-My idea was as simple as blocking the signal so that it will never reach our
-process. In order to do so, I tried to catch the signal as early as possible in
-the kernel: when a process uses the [``kill``](https://man7.org/linux/man-pages/man2/kill.2.html) syscall.
+My idea was as simple as blocking the signal, this way it will never reach our
+protected process. In order to do so, I tried to catch the signal as early as 
+possible in the kernel: when a process uses the [``kill``](https://man7.org/linux/man-pages/man2/kill.2.html)
+syscall.
 
-Fortunately, all syscall have a [``kprobe``](https://www.kernel.org/doc/Documentation/kprobes.txt) hook point. The goal here is to filter signals for our process and discard them.
-In order to discard them, I will use the ``override()`` which will abort the probed function an will return the return code provided in argument. This functionality require that your kernel is compiled with ``CONFIG_BPF_KPROBE_OVERRIDE`` and only works on function with the``ALLOW_ERROR_INJECTION`` tag. Fortunately Arch Linux kernel already come with ``CONFIG_BPF_KPROBE_OVERRIDE`` and every syscall handler seems to have the ``ALLOW_ERROR_INJECTION`` tag on them.
+To quickly see if the idea was really possible, I used [bpftrace](https://github.com/iovisor/bpftrace),
+a high-level tracing language for eBPF.
 
-So using bpftrace, here is a [script](https://github.com/Skallwar/blocksig/blob/main/blocksig.sh) to block all signals to your process:
+Fortunately, all syscall have a [``kprobe``](https://www.kernel.org/doc/Documentation/kprobes.txt)
+hook point for eBPF. The goal here is to filter out signals for our protected
+process and discard them. In order to discard them, I will use the
+``override()`` ``bpftrace`` method which will abort the probed function an will return the return
+code provided in argument. This functionality requires that your kernel was
+compiled with ``CONFIG_BPF_KPROBE_OVERRIDE`` and only works on functions with the
+``ALLOW_ERROR_INJECTION`` tag. Fortunately Arch Linux's kernel already comes
+with ``CONFIG_BPF_KPROBE_OVERRIDE`` enabled, and every syscall handler seems to
+have the ``ALLOW_ERROR_INJECTION`` tag on them.
+
+So here is a [script](https://github.com/Skallwar/blocksig/blob/main/blocksig.sh)
+to block all signals to your process:
 {{<highlight bash>}}
 #!/bin/sh
 
@@ -84,10 +107,10 @@ As you can see, the second time around, our ping did not get killed. We actually
 blocked a ``SIGKILL``.
 
 As a side note, the first time I launched ``blocksig.sh``, I did not filter on the 
-pid before doing the override. As a side effect, ``systemctl`` refused to either 
+pid before calling ``override()``. As a side effect, ``systemctl`` refused to either 
 ``poweroff`` or ``reboot`` my machine.
 
-This technique works fine but we just move the problem elsewhere. Now our process
+This technique works fine but we just moved the problem elsewhere. Now our process
 is protected but our blocksig.sh is not. If someone kills ``blocksig.sh``, our
 process is defenseless and we are back to square one. You might think that using
 ``$$``, the shell special variable for pid will do the trick but remember, this
@@ -112,7 +135,7 @@ from bcc import BPF
 BPF(text='int syscall__kill(void *ctx) { bpf_trace_printk("Hello, World!\\n"); return 0; }').trace_print()
 {{</highlight>}}
 
-So we write some C code as a string inside your Python script... Weird but why not ?
+So we write some C code as a string inside our Python script... Weird but why not ?
 You can also load from a file like so:
 {{<highlight c>}}
 int syscall_kill(void *ctx) {
@@ -135,7 +158,7 @@ signals for multiples pids. I also want to block multiple signals. But how do
 we provide this arguments to our eBPF program? This is done using eBPF maps. 
 Maps are data structures used to share data between userland and our eBPF 
 program.
-There is a lot of different [kinds of maps](https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#maps),
+There are a lot of different [kinds of maps](https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#maps),
 going from arrays to hashmaps. To create a new map with BCC you use the 
 ``BPF_YOURTYPEHERE`` macro in your C stub like so:
 {{<highlight c>}}
@@ -175,13 +198,13 @@ int syscall__kill(struct pt_regs *ctx, int pid, int sig)
 }
 {{</highlight>}}
 
-The Python part needs a bit more logic to make it works:
+The Python part needs a bit more logic to work:
 - Parse the arguments to retrieve signals to block and the pids that need to be
 protected
 - Add the pid of the Python script
 - Put the pids to block inside the corresponding maps
 
-Here is the Python code (without the argument parsing because that boring):
+Here is the Python code (without the argument parsing because that's boring):
 {{<highlight python>}}
 # Args is the resulting object of parse_args() method of argparse
 def initialize_bpf(args):
@@ -205,12 +228,12 @@ $ ping skallwar.fr > /dev/null &
 [1] 315629
 $ sudo ./blocksig.py 315629 &
 $ kill -9 315629
-$ # Nothing append
+$ # Nothing happened
 $ kill -9 $(pidof python) # Pid of the blocksig
 $ # Nothing append
 {{</highlight>}}
 
-But a new problem arise now. If we protect our script and we close the terminal,
+But a new problem arises. If we protect our script and we close the terminal,
 how can we stop it? So I've implemented a system of ticket (a simple file with 
 a unique name) in the tmpfs where the script is pooling whether our ticket has 
 been deleted or not:
@@ -230,25 +253,25 @@ def wait_for_close():
         print('')
 {{</highlight>}}
 
-So there is 2 use case:
+So there is are 2 use cases:
 - Keep it running in the shell and you can use ``CTRL+C`` to stop it (SIGINT 
 can still be blocked)
 - Run it in the background and use the unique ticket in order to stop it
 
 After all of this we should be good, we can protect ourself and our targeted pids.
-Let's see what it's look like in htop, just to make sure.
+Let's see what it looks like in htop, just to make sure.
 
 {{<figure src="images/blocksig_py_sudo_pid_problem.png">}}
 {{<figure src="images/here_we_go_again.png">}}
 
-At this stage I was quite frustrated. Yes you could make it work by login as 
-root and not using ``sudo`` but that's not convinient at all. Fortunately I 
+At this stage I was quite frustrated. Yes you could make it work by logging as 
+root and not using ``sudo`` but that's not convenient at all. Fortunately I 
 found a [post on stack overflow](https://stackoverflow.com/questions/47284045/switch-user-without-creating-an-intermediate-process)
 about forcing sudo not to fork, suggesting me to use ``exec`` before ``sudo``.
 And for once, "it works on my machine"™ out of the box, nice.
 
 
-So here the final result:
+So here is the final result:
 {{<highlight c>}}
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
