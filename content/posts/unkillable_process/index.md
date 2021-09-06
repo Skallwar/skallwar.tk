@@ -332,3 +332,9 @@ wait_for_close()
 {{</highlight>}}
 
 You can find all the code (and maybe future updates 👀) on [Github](https://github.com/Skallwar/blocksig)
+
+# Libbpf
+Before using BCC, I tried to use[``libbpf``](https://github.com/libbpf/libbpf)
+but it did not worked well. Using almost the same C code for the actual eBPF part,
+all the syscall arguments had strange values and thus, nothing worked. You can 
+see what I tried to do on the [libbpf branch on Github](https://github.com/Skallwar/blocksig/tree/libbpf)
