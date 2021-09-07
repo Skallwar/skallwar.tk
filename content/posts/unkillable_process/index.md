@@ -70,7 +70,7 @@ have the ``ALLOW_ERROR_INJECTION`` tag on them.
 
 So here is a [script](https://github.com/Skallwar/blocksig/blob/main/blocksig.sh)
 to block all signals to your process:
-{{<highlight bash>}}
+```bash
 #!/bin/sh
 
 if [ "$#" -ne 1 ]; then
@@ -84,10 +84,10 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 bpftrace -e "kprobe:__x64_sys_kill { if (arg1 == $1) { printf(\"Signal blocked for $1\n\"); override(0); } }" --unsafe
-{{</highlight>}}
+```
 
 Let's take an example:
-{{<highlight terminal>}}
+```terminal
 $ # Without blocksig.sh
 $ ping skallwar.fr > /dev/null &
 [1] 371628
@@ -101,7 +101,7 @@ $ sudo ./blocksig.sh 315629 &
 Attaching 1 probe...
 $ kill -9 315629
 Signal blocked for 315629
-{{</highlight>}}
+```
 
 As you can see, the second time around, our ping did not get killed. We actually 
 blocked a ``SIGKILL``.
@@ -126,32 +126,32 @@ toolkit for creating efficient kernel tracing and manipulation programs using
 eBPF and Python.
 
 Here is what a basic [hello world](https://github.com/iovisor/bcc/blob/master/examples/hello_world.py) looks like:
-{{<highlight python>}}
+```python
 #!/usr/bin/python
 # sudo ./hello_world.py
 
 from bcc import BPF
 
 BPF(text='int syscall__kill(void *ctx) { bpf_trace_printk("Hello, World!\\n"); return 0; }').trace_print()
-{{</highlight>}}
+```
 
 So we write some C code as a string inside our Python script... Weird but why not ?
 You can also load from a file like so:
-{{<highlight c>}}
+```c
 int syscall_kill(void *ctx) {
     bpf_trace_printk("Hello, World!\\n"); 
     return 0;
 }
-{{</highlight>}}
+```
 
-{{<highlight python>}}
+```python
 #!/usr/bin/python
 # sudo ./hello_world.py
 
 from bcc import BPF
 
 BPF(src_file = "hello_world.c")
-{{</highlight>}}
+```
 
 In order to prevent our script to be killed, it needs to be able to block 
 signals for multiples pids. I also want to block multiple signals. But how do 
@@ -161,16 +161,16 @@ program.
 There are a lot of different [kinds of maps](https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#maps),
 going from arrays to hashmaps. To create a new map with BCC you use the 
 ``BPF_YOURTYPEHERE`` macro in your C stub like so:
-{{<highlight c>}}
+```c
 BPF_HASH(pids, int, u8); // Syntax: BPF_HASH(name, key_type, value_type)
-{{</highlight>}}
+```
 
 For the eBPF hook, the logic is quite simple: if the given pid is inside the
 pids hashmap and the signal is in the signal array, then we need to return early
 from the syscall.
 
 Here is the C code corresponding to this algorithm:
-{{<highlight c>}}
+```c
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
 
@@ -196,7 +196,7 @@ int syscall__kill(struct pt_regs *ctx, int pid, int sig)
 
     return 0;
 }
-{{</highlight>}}
+```
 
 The Python part needs a bit more logic to work:
 - Parse the arguments to retrieve signals to block and the pids that need to be
@@ -205,7 +205,7 @@ protected
 - Put the pids to block inside the corresponding maps
 
 Here is the Python code (without the argument parsing because that's boring):
-{{<highlight python>}}
+```python
 # Args is the resulting object of parse_args() method of argparse
 def initialize_bpf(args):
     b = BPF(src_file="blocksig.c")
@@ -220,10 +220,10 @@ def initialize_bpf(args):
 
     for sig in args.sig_array:
         sigs_map[sig] = c_int(1)
-{{</highlight>}}
+```
 
 Time for a demo:
-{{<highlight terminal>}}
+```terminal
 $ ping skallwar.fr > /dev/null &
 [1] 315629
 $ sudo ./blocksig.py 315629 &
@@ -231,13 +231,13 @@ $ kill -9 315629
 $ # Nothing happened
 $ kill -9 $(pidof python) # Pid of the blocksig
 $ # Nothing append
-{{</highlight>}}
+```
 
 But a new problem arises. If we protect our script and we close the terminal,
 how can we stop it? So I've implemented a system of ticket (a simple file with 
 a unique name) in the tmpfs where the script is pooling whether our ticket has 
 been deleted or not:
-{{<highlight python>}}
+```python
 def wait_for_close():
 # Create a tempfile and wait for its deletion
     tf = tempfile.NamedTemporaryFile(delete = False)
@@ -251,7 +251,7 @@ def wait_for_close():
         tf.close()
         os.remove(tf.name)
         print('')
-{{</highlight>}}
+```
 
 So there is are 2 use cases:
 - Keep it running in the shell and you can use ``CTRL+C`` to stop it (SIGINT 
@@ -272,7 +272,7 @@ And for once, "it works on my machine"™ out of the box, nice.
 
 
 So here is the final result:
-{{<highlight c>}}
+```c
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
 
@@ -295,10 +295,9 @@ int syscall__kill(struct pt_regs *ctx, int pid, int sig)
     }
     return 0;
 }
-{{</highlight>}}
+```
 
-
-{{<highlight python>}}
+```python
 #!/usr/bin/python
 
 from bcc import BPF
@@ -352,7 +351,7 @@ def wait_for_close():
 args = parse_args()
 initialize_bpf(args)
 wait_for_close()
-{{</highlight>}}
+```
 
 You can find all the code (and maybe future updates 👀) on [Github](https://github.com/Skallwar/blocksig)
 
