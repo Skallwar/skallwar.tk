@@ -128,11 +128,10 @@ eBPF and Python.
 Here is what a basic [hello world](https://github.com/iovisor/bcc/blob/master/examples/hello_world.py) looks like:
 ```python
 #!/usr/bin/python
-# sudo ./hello_world.py
 
 from bcc import BPF
 
-BPF(text='int syscall__kill(void *ctx) { bpf_trace_printk("Hello, World!\\n"); return 0; }').trace_print()
+BPF(text='int kprobe__sys_kill(void *ctx) { bpf_trace_printk("Hello, World!\\n"); return 0; }').trace_print()
 ```
 
 So we write some C code as a string inside our Python script... Weird but why not ?
@@ -190,7 +189,7 @@ int syscall__kill(struct pt_regs *ctx, int pid, int sig)
         return 0;
 
     if (needs_block(*protected_pid, *protected_sig)) {
-        bpf_trace_printk("Blockeg signal %d for %d\\n", sig, pid);
+        bpf_trace_printk("Blocked signal %d for %d\\n", sig, pid);
         bpf_override_return(ctx, 0);
     }
 
@@ -291,7 +290,7 @@ int syscall__kill(struct pt_regs *ctx, int pid, int sig)
     if (!protected_pid || !protected_sig)
         return 0;
     if (needs_block(*protected_pid, *protected_sig)) {
-        bpf_trace_printk("Blockeg signal %d for %d\\n", sig, pid);
+        bpf_trace_printk("Blocked signal %d for %d\\n", sig, pid);
         bpf_override_return(ctx, 0);
     }
     return 0;
