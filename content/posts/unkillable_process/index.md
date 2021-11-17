@@ -360,3 +360,8 @@ Before using BCC, I tried to use[``libbpf``](https://github.com/libbpf/libbpf)
 but it did not work well. Using almost the same C code for the actual eBPF part,
 all the syscall arguments had strange values and thus, nothing worked. You can 
 see what I tried to do on the [libbpf branch on Github](https://github.com/Skallwar/blocksig/tree/libbpf)
+
+# Talk
+I have talk about this in a conference for the [LSE](https://lse.epita.fr)
+(french):
+{{< youtube id=oacOs3lQsSs?start=5998 >}}
