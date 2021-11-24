@@ -29,7 +29,7 @@ jobs:
       - name: Switch to the site branch
         run: |
           git stash
-          git checkout site
+          git checkout -b site
 
       - name: Restore generated files
         run: |
@@ -42,4 +42,5 @@ jobs:
           author_email: 41898282+github-actions[bot]@users.noreply.github.com
           message: 'Update website'
           branch: site
-          add: '-A --force'
+          add: '-A origin site --force'
+
