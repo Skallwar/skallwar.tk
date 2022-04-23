@@ -362,6 +362,6 @@ all the syscall arguments had strange values and thus, nothing worked. You can
 see what I tried to do on the [libbpf branch on Github](https://github.com/Skallwar/blocksig/tree/libbpf)
 
 # Talk
-I have talk about this in a conference for the [LSE](https://lse.epita.fr)
+I have talked about this in a conference for the [LSE](https://lse.epita.fr)
 (french):
 {{< youtube id=oacOs3lQsSs?start=5998 >}}
