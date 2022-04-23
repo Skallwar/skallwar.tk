@@ -26,21 +26,24 @@ jobs:
       - name: Backup generated files
         run: mv public /tmp/
 
-      - name: Switch to the site branch
-        run: |
-          git stash
-          git checkout -b site
+      - name: Add CNAME
+        working-directory: /tmp/public
+        run: echo 'blog.skallwar.fr' > CNAME
 
-      - name: Restore generated files
+      - name: Commit changes
+        working-directory: /tmp/public
         run: |
-          rm -rf *
-          mv /tmp/public/* ./
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name  "github-action"
+          git config --global init.defaultBranch "main"
+          git init
+          git add .
+          git commit -m "Automatic update of website. Build from $GITHUB_SHA"
 
-      - uses: EndBug/add-and-commit@v7.0.0
+      - name: Push changes
+        uses: ad-m/github-push-action@v0.6.0
         with:
-          author_name: github-actions
-          author_email: 41898282+github-actions[bot]@users.noreply.github.com
-          message: 'Update website'
+          directory: /tmp/public
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: site
-          add: '-A origin site --force'
-
+          force: true
